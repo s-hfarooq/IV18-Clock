@@ -19,8 +19,18 @@
 #include "esp_netif_sntp.h"
 #include "lwip/ip_addr.h"
 #include "esp_sntp.h"
+#include <stdbool.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include "driver/gpio.h"
 
 static const char *TAG = "ESP-CLOCK";
+
+#define DOUT 19
+#define DIN 7
+#define LOAD 4
+#define CLK 2
+#define TESTPIN 18
 
 #ifndef INET6_ADDRSTRLEN
 #define INET6_ADDRSTRLEN 48
@@ -48,8 +58,162 @@ void time_sync_notification_cb(struct timeval *tv)
     ESP_LOGI(TAG, "Notification of a time synchronization event");
 }
 
-void app_main(void)
-{
+void set_val(unsigned char val, unsigned char* ret) {
+  switch (val) {
+    case 0x0:
+      ret[0] = 0x7;
+      ret[1] = 0xE;
+      break;
+    case 0x1:
+      ret[0] = 0x3;
+      ret[1] = 0x0;
+      break;
+    case 0x2:
+      ret[0] = 0x6;
+      ret[1] = 0xD;
+      break;
+    case 0x3:
+      ret[0] = 0x7;
+      ret[1] = 0x9;
+      break;
+    case 0x4:
+      ret[0] = 0x3;
+      ret[1] = 0x3;
+      break;
+    case 0x5:
+      ret[0] = 0x5;
+      ret[1] = 0xB;
+      break;
+    case 0x6:
+      ret[0] = 0x5;
+      ret[1] = 0xF;
+      break;
+    case 0x7:
+      ret[0] = 0x7;
+      ret[1] = 0x0;
+      break;
+    case 0x8:
+      ret[0] = 0x7;
+      ret[1] = 0xF;
+      break;
+    case 0x9:
+      ret[0] = 0x7;
+      ret[1] = 0xB;
+      break;
+    case 0xA:
+      ret[0] = 0x7;
+      ret[1] = 0x7;
+      break;
+    case 0xB:
+      ret[0] = 0x1;
+      ret[1] = 0xF;
+      break;
+    case 0xC:
+      ret[0] = 0x4;
+      ret[1] = 0xE;
+      break;
+    case 0xD:
+      ret[0] = 0x3;
+      ret[1] = 0xD;
+      break;
+    case 0xE:
+      ret[0] = 0x4;
+      ret[1] = 0xF;
+      break;
+    case 0xF:
+      ret[0] = 0x4;
+      ret[1] = 0x7;
+      break;
+    default:
+      ret[0] = 0x0;
+      ret[1] = 0x0;
+      break;
+  }
+}
+
+void tube_init(void) {
+    gpio_reset_pin(DOUT);
+    gpio_set_direction(DOUT, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(LOAD);
+    gpio_set_direction(LOAD, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(CLK);
+    gpio_set_direction(CLK, GPIO_MODE_OUTPUT);
+    
+    gpio_reset_pin(TESTPIN);
+    gpio_set_direction(TESTPIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(TESTPIN, 1);
+}
+
+bool bitRead(unsigned char val, int idx) {
+    val >>= idx;
+    val &= 0x1;
+
+    return val != 0;
+}
+
+void set_tube_time(void) {
+    int del = 0.01;
+
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+
+    setenv("TZ", "PST+8", 1);
+    tzset();
+
+    localtime_r(&now, &timeinfo);
+
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+
+    //                            A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
+    bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
+                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
+                                };
+
+    unsigned char vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
+
+    //  Thu Feb  2 21:52:49 2023
+
+    for(int i = 7; i >= 0; i--) {
+        unsigned char ret[2];
+        set_val(vals[i], ret);
+
+        for(int j = 1; j < 4; j++)
+            send_array[i][j - 1] = bitRead(ret[0], 3 - j);
+        for(int j = 3; j < 7; j++)
+            send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
+
+        send_array[i][15 - i] = 1;
+    }
+
+    // Dots
+    send_array[3][7] = 1;
+    send_array[5][7] = 1;
+
+    for (int j = 0; j < 8; j++) {
+        for (int i = 19; i >= 0; i--) {
+            gpio_set_level(DOUT, send_array[j][i]);
+            gpio_set_level(CLK, 1);
+            vTaskDelay(del / portTICK_PERIOD_MS);
+            gpio_set_level(CLK, 0);
+        }
+
+        gpio_set_level(LOAD, 1);
+        vTaskDelay(del / portTICK_PERIOD_MS);
+        gpio_set_level(LOAD, 0);
+
+        vTaskDelay(del / portTICK_PERIOD_MS);
+    }
+}
+
+void app_main(void) {
     ++boot_count;
     ESP_LOGI(TAG, "Boot count: %d", boot_count);
 
@@ -64,26 +228,6 @@ void app_main(void)
         // update 'now' variable with current time
         time(&now);
     }
-#ifdef CONFIG_SNTP_TIME_SYNC_METHOD_SMOOTH
-    else {
-        // add 500 ms error to the current system time.
-        // Only to demonstrate a work of adjusting method!
-        {
-            ESP_LOGI(TAG, "Add a error for test adjtime");
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL);
-            int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
-            int64_t error_time = cpu_time + 500 * 1000L;
-            struct timeval tv_error = { .tv_sec = error_time / 1000000L, .tv_usec = error_time % 1000000L };
-            settimeofday(&tv_error, NULL);
-        }
-
-        ESP_LOGI(TAG, "Time was set, now just adjusting it. Use SMOOTH SYNC method.");
-        obtain_time();
-        // update 'now' variable with current time
-        time(&now);
-    }
-#endif
 
     char strftime_buf[64];
 
@@ -100,6 +244,9 @@ void app_main(void)
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "The current date/time in Seattle is: %s", strftime_buf);
+
+    tube_init();
+    set_tube_time();
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;
@@ -118,8 +265,7 @@ void app_main(void)
     esp_deep_sleep(1000000LL * deep_sleep_sec);
 }
 
-static void print_servers(void)
-{
+static void print_servers(void) {
     ESP_LOGI(TAG, "List of configured NTP servers:");
 
     for (uint8_t i = 0; i < SNTP_MAX_SERVERS; ++i){
@@ -135,38 +281,10 @@ static void print_servers(void)
     }
 }
 
-static void obtain_time(void)
-{
+static void obtain_time(void) {
     ESP_ERROR_CHECK( nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK( esp_event_loop_create_default() );
-
-#if LWIP_DHCP_GET_NTP_SRV
-    /**
-     * NTP server address could be acquired via DHCP,
-     * see following menuconfig options:
-     * 'LWIP_DHCP_GET_NTP_SRV' - enable STNP over DHCP
-     * 'LWIP_SNTP_DEBUG' - enable debugging messages
-     *
-     * NOTE: This call should be made BEFORE esp acquires IP address from DHCP,
-     * otherwise NTP option would be rejected by default.
-     */
-    ESP_LOGI(TAG, "Initializing SNTP");
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_SNTP_TIME_SERVER);
-    config.start = false;                       // start SNTP service explicitly (after connecting)
-    config.server_from_dhcp = true;             // accept NTP offers from DHCP server, if any (need to enable *before* connecting)
-    config.renew_servers_after_new_IP = true;   // let esp-netif update configured SNTP server(s) after receiving DHCP lease
-    config.index_of_first_server = 1;           // updates from server num 1, leaving server 0 (from DHCP) intact
-    // configure the event on which we renew servers
-#ifdef CONFIG_EXAMPLE_CONNECT_WIFI
-    config.ip_event_to_renew = IP_EVENT_STA_GOT_IP;
-#else
-    config.ip_event_to_renew = IP_EVENT_ETH_GOT_IP;
-#endif
-    config.sync_cb = time_sync_notification_cb; // only if we need the notification function
-    esp_netif_sntp_init(&config);
-
-#endif /* LWIP_DHCP_GET_NTP_SRV */
 
     /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
      * Read "Establishing Wi-Fi or Ethernet Connection" section in
@@ -174,20 +292,7 @@ static void obtain_time(void)
      */
     ESP_ERROR_CHECK(example_connect());
 
-#if LWIP_DHCP_GET_NTP_SRV
-    ESP_LOGI(TAG, "Starting SNTP");
-    esp_netif_sntp_start();
-#if LWIP_IPV6 && SNTP_MAX_SERVERS > 2
-    /* This demonstrates using IPv6 address as an additional SNTP server
-     * (statically assigned IPv6 address is also possible)
-     */
-    ip_addr_t ip6;
-    if (ipaddr_aton("2a01:3f7::1", &ip6)) {    // ipv6 ntp source "ntp.netnod.se"
-        esp_sntp_setserver(2, &ip6);
-    }
-#endif  /* LWIP_IPV6 */
 
-#else
     ESP_LOGI(TAG, "Initializing and starting SNTP");
 #if CONFIG_LWIP_SNTP_MAX_SERVERS > 1
     /* This demonstrates configuring more than one server
@@ -206,7 +311,7 @@ static void obtain_time(void)
 #endif
 
     esp_netif_sntp_init(&config);
-#endif
+
 
     print_servers();
 
