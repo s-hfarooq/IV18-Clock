@@ -24,6 +24,18 @@
 #include <freertos/task.h>
 #include "driver/gpio.h"
 
+#include "esp_wifi.h"
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include "sdkconfig.h"
+
+#define WEB_SERVER "api.open-meteo.com"
+#define WEB_PORT "80"
+#define WEB_PATH "/v1/forecast?latitude=47.68&longitude=-122.21&current_weather=true"
+
 static const char *TAG = "ESP-CLOCK";
 
 #define DOUT 19
@@ -35,11 +47,15 @@ static const char *TAG = "ESP-CLOCK";
 #define INET6_ADDRSTRLEN 48
 #endif
 
+#define TO_F(c) ((c * 9 / 5) + 32)
+
 /* Variable holding number of times ESP32 restarted since first boot.
  * It is placed into RTC memory using RTC_DATA_ATTR and
  * maintains its value when ESP32 wakes from deep sleep.
  */
 RTC_DATA_ATTR static int boot_count = 0;
+
+enum states {clock_24, clock_12, temp_room, temp_loc} curr_state;
 
 static void obtain_time(void);
 
@@ -147,6 +163,135 @@ bool bitRead(unsigned char val, int idx) {
 
     return val != 0;
 }
+
+
+
+static const char *REQUEST = "GET " WEB_PATH " HTTP/1.0\r\n"
+    "Host: "WEB_SERVER":"WEB_PORT"\r\n"
+    "User-Agent: esp-idf/1.0 esp32\r\n"
+    "\r\n";
+
+
+static void http_get_task(void *pvParameters) {
+    const struct addrinfo hints = {
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_STREAM,
+    };
+    struct addrinfo *res;
+    struct in_addr *addr;
+    int s, r;
+    char recv_buf[64];
+
+    while(1) {
+        int err = getaddrinfo(WEB_SERVER, WEB_PORT, &hints, &res);
+
+        if(err != 0 || res == NULL) {
+            ESP_LOGE(TAG, "DNS lookup failed err=%d res=%p", err, res);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        /* Code to print the resolved IP.
+           Note: inet_ntoa is non-reentrant, look at ipaddr_ntoa_r for "real" code */
+        addr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+        ESP_LOGI(TAG, "DNS lookup succeeded. IP=%s", inet_ntoa(*addr));
+
+        s = socket(res->ai_family, res->ai_socktype, 0);
+        if(s < 0) {
+            ESP_LOGE(TAG, "... Failed to allocate socket.");
+            freeaddrinfo(res);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        ESP_LOGI(TAG, "... allocated socket");
+
+        if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
+            ESP_LOGE(TAG, "... socket connect failed errno=%d", errno);
+            close(s);
+            freeaddrinfo(res);
+            vTaskDelay(4000 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        ESP_LOGI(TAG, "... connected");
+        freeaddrinfo(res);
+
+        if (write(s, REQUEST, strlen(REQUEST)) < 0) {
+            ESP_LOGE(TAG, "... socket send failed");
+            close(s);
+            vTaskDelay(4000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        ESP_LOGI(TAG, "... socket send success");
+
+        struct timeval receiving_timeout;
+        receiving_timeout.tv_sec = 5;
+        receiving_timeout.tv_usec = 0;
+        if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &receiving_timeout,
+                sizeof(receiving_timeout)) < 0) {
+            ESP_LOGE(TAG, "... failed to set socket receiving timeout");
+            close(s);
+            vTaskDelay(4000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        ESP_LOGI(TAG, "... set socket receiving timeout success");
+
+        /* Read HTTP response */
+        char full_arr[600];
+        bzero(full_arr, sizeof(full_arr));
+        int fai = 0;
+        
+        do {
+            bzero(recv_buf, sizeof(recv_buf));
+            r = read(s, recv_buf, sizeof(recv_buf)-1);
+            for(int i = 0; i < r; i++) {
+                full_arr[fai] = recv_buf[i];
+                fai++;
+                putchar(recv_buf[i]);
+            }
+        } while(r > 0);
+
+        char *tmp_char_arr;
+        tmp_char_arr = strstr(full_arr, "temperature");
+        int start_idx = tmp_char_arr - full_arr + 13;
+        int end_idx = start_idx;
+        char tmp_char = full_arr[end_idx];
+        while(isdigit(tmp_char) || tmp_char == '.') {
+            end_idx++;
+            tmp_char = full_arr[end_idx];
+        }
+
+        char tmp_str[10];
+        bzero(tmp_str, sizeof(tmp_str));
+        int count = 0;
+        while(count < end_idx - start_idx) {
+            tmp_str[count] = full_arr[start_idx + count];
+            count++;
+        }
+
+        float temp_c = (float)atof(tmp_str);
+        float temp_f = TO_F(temp_c);
+        ESP_LOGI(TAG, "TEMP IS: %s", tmp_str);
+        ESP_LOGI(TAG, "TEMP IS: %f (%f)", temp_c, temp_f);
+
+
+
+        // ESP_LOGI(TAG, "idx=%d, ca=%d, fa=%d\n", idx, (int)tmp_char_arr, (int)full_arr);
+        // ESP_LOGI(TAG, "START\n");
+        // ESP_LOGI(TAG, "%s", full_arr);
+        // ESP_LOGI(TAG, "\n\nEND\n\n");
+
+
+        ESP_LOGI(TAG, "... done reading from socket. Last read return=%d errno=%d.", r, errno);
+        close(s);
+        for(int countdown = 10; countdown >= 0; countdown--) {
+            ESP_LOGI(TAG, "%d... ", countdown);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+        ESP_LOGI(TAG, "Starting again!");
+    }
+}
+
 
 void set_tube_time(void *params) {
     while(1) {
@@ -256,9 +401,21 @@ void app_main(void) {
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "The current date/time in Seattle is: %s", strftime_buf);
 
-    tube_init();
-    xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
-                        NULL, 10, NULL);
+    // tube_init();
+    // xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
+    //                     NULL, 10, NULL);
+
+    ESP_ERROR_CHECK( nvs_flash_init() );
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
+     * Read "Establishing Wi-Fi or Ethernet Connection" section in
+     * examples/protocols/README.md for more information about this function.
+     */
+    ESP_ERROR_CHECK(example_connect());
+
+    http_get_task(NULL);
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;
