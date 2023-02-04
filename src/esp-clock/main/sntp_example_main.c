@@ -31,17 +31,19 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 #include "sdkconfig.h"
+#include <pthread.h>
 
+// Variables to fetch weather info
 #define WEB_SERVER "api.open-meteo.com"
 #define WEB_PORT "80"
 #define WEB_PATH "/v1/forecast?latitude=47.68&longitude=-122.21&current_weather=true"
 
 static const char *TAG = "ESP-CLOCK";
 
+// Pins used for MAX6921
 #define DOUT 19
 #define LOAD 4
 #define CLK 2
-#define TESTPIN 18
 
 #ifndef INET6_ADDRSTRLEN
 #define INET6_ADDRSTRLEN 48
@@ -55,7 +57,11 @@ static const char *TAG = "ESP-CLOCK";
  */
 RTC_DATA_ATTR static int boot_count = 0;
 
-enum states {clock_24, clock_12, temp_room, temp_loc} curr_state;
+enum states {clock_24, clock_12, temp_room, temp_loc} curr_state = clock_12;
+static volatile int tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+static volatile bool tube_dots[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+static pthread_mutex_t tube_vals_lock;
+static pthread_mutex_t tube_dots_lock;
 
 static void obtain_time(void);
 
@@ -71,6 +77,7 @@ void time_sync_notification_cb(struct timeval *tv) {
     ESP_LOGI(TAG, "Notification of a time synchronization event");
 }
 
+// Determine which bits of 7 segment display to set high based on number trying to display
 void set_val(unsigned char val, unsigned char* ret) {
   switch (val) {
     case 0x0:
@@ -151,10 +158,11 @@ void tube_init(void) {
     gpio_set_direction(LOAD, GPIO_MODE_OUTPUT);
     gpio_reset_pin(CLK);
     gpio_set_direction(CLK, GPIO_MODE_OUTPUT);
-    
-    gpio_reset_pin(TESTPIN);
-    gpio_set_direction(TESTPIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(TESTPIN, 1);
+
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(example_connect());
 }
 
 bool bitRead(unsigned char val, int idx) {
@@ -164,13 +172,10 @@ bool bitRead(unsigned char val, int idx) {
     return val != 0;
 }
 
-
-
 static const char *REQUEST = "GET " WEB_PATH " HTTP/1.0\r\n"
     "Host: "WEB_SERVER":"WEB_PORT"\r\n"
     "User-Agent: esp-idf/1.0 esp32\r\n"
     "\r\n";
-
 
 static void http_get_task(void *pvParameters) {
     const struct addrinfo hints = {
@@ -284,71 +289,132 @@ static void http_get_task(void *pvParameters) {
     }
 }
 
-void set_tube(int vals[8], bool dots[8]) {
-    int del = 0.01;
+void set_tube() {
+    while(1) {
+        int del = 1;
 
-    //                         A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
-    bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
-                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
-                            };
+        //                         A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
+        bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
+                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
+                                };
 
-    // Convert int value to segment values
-    for(int i = 7; i >= 0; i--) {
-        unsigned char ret[2];
-        set_val(vals[i], ret);
+        // Convert int value to segment values
+        for(int i = 7; i >= 0; i--) {
+            unsigned char ret[2];
+            set_val(tube_vals[i], ret);
 
-        for(int j = 1; j < 4; j++)
-            send_array[i][j - 1] = bitRead(ret[0], 3 - j);
-        for(int j = 3; j < 7; j++)
-            send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
+            for(int j = 1; j < 4; j++)
+                send_array[i][j - 1] = bitRead(ret[0], 3 - j);
+            for(int j = 3; j < 7; j++)
+                send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
 
-        send_array[i][15 - i] = 1;
-    }
-
-    // Dots
-    for(int i = 0; i < 8; i++)
-        send_array[i][7] = dots[i];
-
-    // Send to MAX6921
-    for (int j = 0; j < 8; j++) {
-        for (int i = 19; i >= 0; i--) {
-            gpio_set_level(DOUT, send_array[j][i]);
-            gpio_set_level(CLK, 1);
-            vTaskDelay(del / portTICK_PERIOD_MS);
-            gpio_set_level(CLK, 0);
+            send_array[i][15 - i] = 1;
         }
 
-        gpio_set_level(LOAD, 1);
-        vTaskDelay(del / portTICK_PERIOD_MS);
-        gpio_set_level(LOAD, 0);
+        // Dots
+        for(int i = 0; i < 8; i++)
+            send_array[i][7] = tube_dots[i];
 
-        vTaskDelay(del / portTICK_PERIOD_MS);
+        // Send to MAX6921
+        for (int j = 0; j < 8; j++) {
+            for (int i = 19; i >= 0; i--) {
+                gpio_set_level(DOUT, send_array[j][i]);
+                gpio_set_level(CLK, 1);
+                vTaskDelay(del / portTICK_PERIOD_MS);
+                gpio_set_level(CLK, 0);
+            }
+
+            gpio_set_level(LOAD, 1);
+            vTaskDelay(del / portTICK_PERIOD_MS);
+            gpio_set_level(LOAD, 0);
+
+            vTaskDelay(del / portTICK_PERIOD_MS);
+        }
     }
+
+    vTaskDelete(NULL);
 }
 
-void set_tube_time(void *params) {
+void set_time(bool is_24) {
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+
+    setenv("TZ", "PST+8", 1);
+    tzset();
+
+    localtime_r(&now, &timeinfo);
+
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+
+    // TODO - if is_24=false set 9th digit dot
+    int hour = timeinfo.tm_hour;
+    if(!is_24)
+        hour %= 12;
+
+    pthread_mutex_lock(&tube_vals_lock);
+    tube_vals[0] = 20;
+    tube_vals[1] = 20;
+    tube_vals[2] = hour / 10;
+    tube_vals[3] = hour % 10;
+    tube_vals[4] = timeinfo.tm_min / 10;
+    tube_vals[5] = timeinfo.tm_min % 10;
+    tube_vals[6] = timeinfo.tm_sec / 10;
+    tube_vals[7] = timeinfo.tm_sec % 10;
+    pthread_mutex_unlock(&tube_vals_lock);
+    pthread_mutex_lock(&tube_dots_lock);
+    tube_dots[0] = 0;
+    tube_dots[1] = 0;
+    tube_dots[2] = 0;
+    tube_dots[3] = 1;
+    tube_dots[4] = 0;
+    tube_dots[5] = 1;
+    tube_dots[6] = 0;
+    tube_dots[7] = 0;
+    pthread_mutex_unlock(&tube_dots_lock);
+}
+
+void set_temp_loc() {
+
+}
+
+void set_temp_room() {
+
+}
+
+void set_error() {
+
+}
+
+void dispatcher() {
     while(1) {
-        time_t now;
-        struct tm timeinfo;
-        time(&now);
+        switch(curr_state) {
+            case clock_24:
+                set_time(true);
+                break;
+            case clock_12:
+                set_time(false);
+                break;
+            case temp_room:
+                set_temp_room();
+                break;
+            case temp_loc:
+                set_temp_loc();
+                break;
+            default:
+                set_error();
+                break;
+        }
 
-        setenv("TZ", "PST+8", 1);
-        tzset();
-
-        localtime_r(&now, &timeinfo);
-
-        char strftime_buf[64];
-        strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-
-        int vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
-        bool dots[8] = {0, 0, 0, 1, 0, 1, 0, 0};
-        set_tube(vals, dots);
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        // TODO: check if button pressed - if it is then move to next state
     }
 
     vTaskDelete(NULL);
@@ -387,20 +453,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "The current date/time in Seattle is: %s", strftime_buf);
 
     tube_init();
-    xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
+    xTaskCreate(dispatcher, "dispatcher", 8 * 1024,
                         NULL, 10, NULL);
+    xTaskCreatePinnedToCore(set_tube, "set_tube", 2 * 1024,
+                        NULL, 1, NULL, 1);
 
-    ESP_ERROR_CHECK( nvs_flash_init() );
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
-    ESP_ERROR_CHECK(example_connect());
 
-    http_get_task(NULL);
+    // http_get_task(NULL);
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;
@@ -413,10 +473,6 @@ void app_main(void) {
             vTaskDelay(2000 / portTICK_PERIOD_MS);
         }
     }
-
-    // const int deep_sleep_sec = 10;
-    // ESP_LOGI(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
-    // esp_deep_sleep(1000000LL * deep_sleep_sec);
 }
 
 static void print_servers(void) {
