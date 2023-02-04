@@ -78,7 +78,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 }
 
 // Determine which bits of 7 segment display to set high based on number trying to display
-void set_val(char val, unsigned char* ret) {
+void segment_value_conversion(char val, unsigned char* ret) {
   switch (val) {
     case '0':
       ret[0] = 0x7;
@@ -359,19 +359,19 @@ void set_tube() {
 
         //                         A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
         bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
-                                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
-                                };
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
+                                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
+                                 };
 
         // Convert int value to segment values
         for(int i = 7; i >= 0; i--) {
             unsigned char ret[2];
-            set_val(tube_vals[i], ret);
+            segment_value_conversion(tube_vals[i], ret);
 
             for(int j = 1; j < 4; j++)
                 send_array[i][j - 1] = bitRead(ret[0], 3 - j);
@@ -420,11 +420,17 @@ void set_time(bool is_24) {
 
     // TODO - if is_24=false set 9th digit dot
     int hour = timeinfo.tm_hour;
-    if(!is_24)
+    bool is_pm = false;
+    if(!is_24) {
+        is_pm = (hour >= 12);
         hour %= 12;
 
+        if(hour == 0)
+            hour = 12;
+    }
+
     pthread_mutex_lock(&tube_vals_lock);
-    tube_vals[0] = NULL;
+    tube_vals[0] = is_24 ? NULL : (is_pm ? 'P' : 'A');
     tube_vals[1] = NULL;
     tube_vals[2] = (hour / 10) + '0';
     tube_vals[3] = (hour % 10) + '0';
