@@ -274,14 +274,6 @@ static void http_get_task(void *pvParameters) {
         ESP_LOGI(TAG, "TEMP IS: %s", tmp_str);
         ESP_LOGI(TAG, "TEMP IS: %f (%f)", temp_c, temp_f);
 
-
-
-        // ESP_LOGI(TAG, "idx=%d, ca=%d, fa=%d\n", idx, (int)tmp_char_arr, (int)full_arr);
-        // ESP_LOGI(TAG, "START\n");
-        // ESP_LOGI(TAG, "%s", full_arr);
-        // ESP_LOGI(TAG, "\n\nEND\n\n");
-
-
         ESP_LOGI(TAG, "... done reading from socket. Last read return=%d errno=%d.", r, errno);
         close(s);
         for(int countdown = 10; countdown >= 0; countdown--) {
@@ -292,11 +284,56 @@ static void http_get_task(void *pvParameters) {
     }
 }
 
+void set_tube(int vals[8], bool dots[8]) {
+    int del = 0.01;
+
+    //                         A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
+    bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
+                              {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
+                            };
+
+    // Convert int value to segment values
+    for(int i = 7; i >= 0; i--) {
+        unsigned char ret[2];
+        set_val(vals[i], ret);
+
+        for(int j = 1; j < 4; j++)
+            send_array[i][j - 1] = bitRead(ret[0], 3 - j);
+        for(int j = 3; j < 7; j++)
+            send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
+
+        send_array[i][15 - i] = 1;
+    }
+
+    // Dots
+    for(int i = 0; i < 8; i++)
+        send_array[i][7] = dots[i];
+
+    // Send to MAX6921
+    for (int j = 0; j < 8; j++) {
+        for (int i = 19; i >= 0; i--) {
+            gpio_set_level(DOUT, send_array[j][i]);
+            gpio_set_level(CLK, 1);
+            vTaskDelay(del / portTICK_PERIOD_MS);
+            gpio_set_level(CLK, 0);
+        }
+
+        gpio_set_level(LOAD, 1);
+        vTaskDelay(del / portTICK_PERIOD_MS);
+        gpio_set_level(LOAD, 0);
+
+        vTaskDelay(del / portTICK_PERIOD_MS);
+    }
+}
 
 void set_tube_time(void *params) {
     while(1) {
-        int del = 0.01;
-
         time_t now;
         struct tm timeinfo;
         time(&now);
@@ -309,61 +346,9 @@ void set_tube_time(void *params) {
         char strftime_buf[64];
         strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
 
-        //                            A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
-        bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
-                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
-                                    };
-
-        unsigned char vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
-
-        //  Thu Feb  2 21:52:49 2023
-
-        for(int i = 7; i >= 0; i--) {
-            unsigned char ret[2];
-            set_val(vals[i], ret);
-
-            for(int j = 1; j < 4; j++)
-                send_array[i][j - 1] = bitRead(ret[0], 3 - j);
-            for(int j = 3; j < 7; j++)
-                send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
-
-            send_array[i][15 - i] = 1;
-        }
-
-        // Dots
-        send_array[3][7] = 1;
-        send_array[5][7] = 1;
-
-        // ESP_LOGI(TAG, "ARRAY:");
-        // for(int i = 0; i < 8; i++) {
-        //     char tmp_str[20];
-        //     for(int j = 0; j < 20; j++) {
-        //         tmp_str[j] = send_array[i][j] + '0';
-        //     }
-
-        //     ESP_LOGI(TAG, "%s\n", tmp_str);
-        // }
-
-        for (int j = 0; j < 8; j++) {
-            for (int i = 19; i >= 0; i--) {
-                gpio_set_level(DOUT, send_array[j][i]);
-                gpio_set_level(CLK, 1);
-                vTaskDelay(del / portTICK_PERIOD_MS);
-                gpio_set_level(CLK, 0);
-            }
-
-            gpio_set_level(LOAD, 1);
-            vTaskDelay(del / portTICK_PERIOD_MS);
-            gpio_set_level(LOAD, 0);
-
-            vTaskDelay(del / portTICK_PERIOD_MS);
-        }
+        int vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
+        bool dots[8] = {0, 0, 0, 1, 0, 1, 0, 0};
+        set_tube(vals, dots);
     }
 
     vTaskDelete(NULL);
@@ -401,9 +386,9 @@ void app_main(void) {
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "The current date/time in Seattle is: %s", strftime_buf);
 
-    // tube_init();
-    // xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
-    //                     NULL, 10, NULL);
+    tube_init();
+    xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
+                        NULL, 10, NULL);
 
     ESP_ERROR_CHECK( nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());
