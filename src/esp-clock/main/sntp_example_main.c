@@ -58,7 +58,7 @@ static const char *TAG = "ESP-CLOCK";
 RTC_DATA_ATTR static int boot_count = 0;
 
 enum states {clock_24, clock_12, temp_room, temp_loc} curr_state = clock_12;
-static volatile int tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+static volatile char tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static volatile bool tube_dots[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static pthread_mutex_t tube_vals_lock;
 static pthread_mutex_t tube_dots_lock;
@@ -78,71 +78,135 @@ void time_sync_notification_cb(struct timeval *tv) {
 }
 
 // Determine which bits of 7 segment display to set high based on number trying to display
-void set_val(unsigned char val, unsigned char* ret) {
+void set_val(char val, unsigned char* ret) {
   switch (val) {
-    case 0x0:
+    case '0':
       ret[0] = 0x7;
       ret[1] = 0xE;
       break;
-    case 0x1:
+    case '1':
       ret[0] = 0x3;
       ret[1] = 0x0;
       break;
-    case 0x2:
+    case '2':
       ret[0] = 0x6;
       ret[1] = 0xD;
       break;
-    case 0x3:
+    case '3':
       ret[0] = 0x7;
       ret[1] = 0x9;
       break;
-    case 0x4:
+    case '4':
       ret[0] = 0x3;
       ret[1] = 0x3;
       break;
-    case 0x5:
+    case '5':
       ret[0] = 0x5;
       ret[1] = 0xB;
       break;
-    case 0x6:
+    case '6':
       ret[0] = 0x5;
       ret[1] = 0xF;
       break;
-    case 0x7:
+    case '7':
       ret[0] = 0x7;
       ret[1] = 0x0;
       break;
-    case 0x8:
+    case '8':
       ret[0] = 0x7;
       ret[1] = 0xF;
       break;
-    case 0x9:
+    case '9':
       ret[0] = 0x7;
       ret[1] = 0xB;
       break;
-    case 0xA:
+    case 'A':
       ret[0] = 0x7;
       ret[1] = 0x7;
       break;
-    case 0xB:
-      ret[0] = 0x1;
-      ret[1] = 0xF;
+    case 'B':
+      ret[0] = 0x1; 
+      ret[1] = 0xF; 
       break;
-    case 0xC:
+    case 'c':
       ret[0] = 0x4;
       ret[1] = 0xE;
       break;
-    case 0xD:
+    case 'C':
+      ret[0] = 0x4;
+      ret[1] = 0xE;
+      break;
+    case 'D':
       ret[0] = 0x3;
       ret[1] = 0xD;
       break;
-    case 0xE:
+    case 'E':
       ret[0] = 0x4;
       ret[1] = 0xF;
       break;
-    case 0xF:
+    case 'F':
       ret[0] = 0x4;
       ret[1] = 0x7;
+      break;
+    case 'G':
+      ret[0] = 0x5;
+      ret[1] = 0xE;
+      break;
+    case 'H':
+      ret[0] = 0x3;
+      ret[1] = 0x7;
+      break;
+    case 'h':
+      ret[0] = 0x1;
+      ret[1] = 0x7;
+      break;
+    case 'I':
+      ret[0] = 0x0;
+      ret[1] = 0x6;
+      break;
+    case 'J':
+      ret[0] = 0x3;
+      ret[1] = 0x8;
+      break;
+    case 'L':
+      ret[0] = 0x0;
+      ret[1] = 0xE;
+      break;
+    case 'N':
+      ret[0] = 0x7;
+      ret[1] = 0x6;
+      break;
+    case 'n':
+      ret[0] = 0x1;
+      ret[1] = 0x5;
+      break;
+    case 'o':
+      ret[0] = 0x1;
+      ret[1] = 0xD;
+      break;
+    case 'P':
+      ret[0] = 0x6;
+      ret[1] = 0x7;
+      break;
+    case 'r':
+      ret[0] = 0x0;
+      ret[1] = 0x5;
+      break;
+    case 't':
+      ret[0] = 0x0;
+      ret[1] = 0xF;
+      break;
+    case 'U':
+      ret[0] = 0x3;
+      ret[1] = 0xE;
+      break;
+    case 'u':
+      ret[0] = 0x1;
+      ret[1] = 0xC;
+      break;
+    case 'y':
+      ret[0] = 0x3;
+      ret[1] = 0xB;
       break;
     default:
       ret[0] = 0x0;
@@ -360,14 +424,14 @@ void set_time(bool is_24) {
         hour %= 12;
 
     pthread_mutex_lock(&tube_vals_lock);
-    tube_vals[0] = 20;
-    tube_vals[1] = 20;
-    tube_vals[2] = hour / 10;
-    tube_vals[3] = hour % 10;
-    tube_vals[4] = timeinfo.tm_min / 10;
-    tube_vals[5] = timeinfo.tm_min % 10;
-    tube_vals[6] = timeinfo.tm_sec / 10;
-    tube_vals[7] = timeinfo.tm_sec % 10;
+    tube_vals[0] = NULL;
+    tube_vals[1] = NULL;
+    tube_vals[2] = (hour / 10) + '0';
+    tube_vals[3] = (hour % 10) + '0';
+    tube_vals[4] = (timeinfo.tm_min / 10) + '0';
+    tube_vals[5] = (timeinfo.tm_min % 10) + '0';
+    tube_vals[6] = (timeinfo.tm_sec / 10) + '0';
+    tube_vals[7] = (timeinfo.tm_sec % 10) + '0';
     pthread_mutex_unlock(&tube_vals_lock);
     pthread_mutex_lock(&tube_dots_lock);
     tube_dots[0] = 0;
