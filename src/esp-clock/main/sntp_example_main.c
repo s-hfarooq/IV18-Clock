@@ -27,7 +27,6 @@
 static const char *TAG = "ESP-CLOCK";
 
 #define DOUT 19
-#define DIN 7
 #define LOAD 4
 #define CLK 2
 #define TESTPIN 18
@@ -45,16 +44,14 @@ RTC_DATA_ATTR static int boot_count = 0;
 static void obtain_time(void);
 
 #ifdef CONFIG_SNTP_TIME_SYNC_METHOD_CUSTOM
-void sntp_sync_time(struct timeval *tv)
-{
+void sntp_sync_time(struct timeval *tv) {
    settimeofday(tv, NULL);
    ESP_LOGI(TAG, "Time is synchronized from custom code");
    sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
 }
 #endif
 
-void time_sync_notification_cb(struct timeval *tv)
-{
+void time_sync_notification_cb(struct timeval *tv) {
     ESP_LOGI(TAG, "Notification of a time synchronization event");
 }
 
@@ -151,66 +148,80 @@ bool bitRead(unsigned char val, int idx) {
     return val != 0;
 }
 
-void set_tube_time(void) {
-    int del = 0.01;
+void set_tube_time(void *params) {
+    while(1) {
+        int del = 0.01;
 
-    time_t now;
-    struct tm timeinfo;
-    time(&now);
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
 
-    setenv("TZ", "PST+8", 1);
-    tzset();
+        setenv("TZ", "PST+8", 1);
+        tzset();
 
-    localtime_r(&now, &timeinfo);
+        localtime_r(&now, &timeinfo);
 
-    char strftime_buf[64];
-    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+        char strftime_buf[64];
+        strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
 
-    //                            A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
-    bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
-                                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
-                                };
+        //                            A  B  C  D  E  F  G  *  1  2  3  4  5  6  7  8  9  x  x  x
+        bool send_array[8][20] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 0
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 1
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 2
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 3
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 4
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 5
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // 6
+                                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}  // 7
+                                    };
 
-    unsigned char vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
+        unsigned char vals[8] = {0, 0, timeinfo.tm_hour / 10, timeinfo.tm_hour % 10, timeinfo.tm_min / 10, timeinfo.tm_min % 10, timeinfo.tm_sec / 10, timeinfo.tm_sec % 10};
 
-    //  Thu Feb  2 21:52:49 2023
+        //  Thu Feb  2 21:52:49 2023
 
-    for(int i = 7; i >= 0; i--) {
-        unsigned char ret[2];
-        set_val(vals[i], ret);
+        for(int i = 7; i >= 0; i--) {
+            unsigned char ret[2];
+            set_val(vals[i], ret);
 
-        for(int j = 1; j < 4; j++)
-            send_array[i][j - 1] = bitRead(ret[0], 3 - j);
-        for(int j = 3; j < 7; j++)
-            send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
+            for(int j = 1; j < 4; j++)
+                send_array[i][j - 1] = bitRead(ret[0], 3 - j);
+            for(int j = 3; j < 7; j++)
+                send_array[i][j] = bitRead(ret[1], 3 - (j - 3));
 
-        send_array[i][15 - i] = 1;
-    }
-
-    // Dots
-    send_array[3][7] = 1;
-    send_array[5][7] = 1;
-
-    for (int j = 0; j < 8; j++) {
-        for (int i = 19; i >= 0; i--) {
-            gpio_set_level(DOUT, send_array[j][i]);
-            gpio_set_level(CLK, 1);
-            vTaskDelay(del / portTICK_PERIOD_MS);
-            gpio_set_level(CLK, 0);
+            send_array[i][15 - i] = 1;
         }
 
-        gpio_set_level(LOAD, 1);
-        vTaskDelay(del / portTICK_PERIOD_MS);
-        gpio_set_level(LOAD, 0);
+        // Dots
+        send_array[3][7] = 1;
+        send_array[5][7] = 1;
 
-        vTaskDelay(del / portTICK_PERIOD_MS);
+        // ESP_LOGI(TAG, "ARRAY:");
+        // for(int i = 0; i < 8; i++) {
+        //     char tmp_str[20];
+        //     for(int j = 0; j < 20; j++) {
+        //         tmp_str[j] = send_array[i][j] + '0';
+        //     }
+
+        //     ESP_LOGI(TAG, "%s\n", tmp_str);
+        // }
+
+        for (int j = 0; j < 8; j++) {
+            for (int i = 19; i >= 0; i--) {
+                gpio_set_level(DOUT, send_array[j][i]);
+                gpio_set_level(CLK, 1);
+                vTaskDelay(del / portTICK_PERIOD_MS);
+                gpio_set_level(CLK, 0);
+            }
+
+            gpio_set_level(LOAD, 1);
+            vTaskDelay(del / portTICK_PERIOD_MS);
+            gpio_set_level(LOAD, 0);
+
+            vTaskDelay(del / portTICK_PERIOD_MS);
+        }
     }
+
+    vTaskDelete(NULL);
 }
 
 void app_main(void) {
@@ -246,7 +257,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "The current date/time in Seattle is: %s", strftime_buf);
 
     tube_init();
-    set_tube_time();
+    xTaskCreate(set_tube_time, "set_tube_time", 2 * 1024,
+                        NULL, 10, NULL);
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;
@@ -260,9 +272,9 @@ void app_main(void) {
         }
     }
 
-    const int deep_sleep_sec = 10;
-    ESP_LOGI(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
-    esp_deep_sleep(1000000LL * deep_sleep_sec);
+    // const int deep_sleep_sec = 10;
+    // ESP_LOGI(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
+    // esp_deep_sleep(1000000LL * deep_sleep_sec);
 }
 
 static void print_servers(void) {
