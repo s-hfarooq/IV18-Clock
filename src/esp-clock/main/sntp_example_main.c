@@ -33,6 +33,9 @@
 #include "sdkconfig.h"
 #include <pthread.h>
 
+// #include "waiter.h"
+#include "dht11.h"
+
 // Variables to fetch weather info
 #define WEB_SERVER "api.open-meteo.com"
 #define WEB_PORT "80"
@@ -46,6 +49,7 @@ static const char *TAG = "ESP-CLOCK";
 #define CLK 2
 
 #define PUSH_BUTTON_PIN 23
+#define DH11_PIN 22
 
 #ifndef INET6_ADDRSTRLEN
 #define INET6_ADDRSTRLEN 48
@@ -59,7 +63,7 @@ static const char *TAG = "ESP-CLOCK";
  */
 RTC_DATA_ATTR static int boot_count = 0;
 
-enum states {clock_24, clock_12, temp_room, temp_loc} curr_state = clock_12;
+enum states {clock_24, clock_12, temp_room, humidity_room, temp_loc} curr_state = clock_12;
 static volatile char tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static volatile bool tube_dots[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static pthread_mutex_t tube_vals_lock;
@@ -226,6 +230,8 @@ void tube_init(void) {
     gpio_set_direction(CLK, GPIO_MODE_OUTPUT);
 
     gpio_set_direction(PUSH_BUTTON_PIN, GPIO_MODE_INPUT);
+
+    DHT11_init(DH11_PIN);
 
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
@@ -422,7 +428,6 @@ void set_time(bool is_24) {
     char strftime_buf[64];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
 
-    // TODO - if is_24=false set 9th digit dot
     int hour = timeinfo.tm_hour;
     bool is_pm = false;
     if(!is_24) {
@@ -456,15 +461,76 @@ void set_time(bool is_24) {
 }
 
 void set_temp_loc() {
-
+    // float make_temp_api_request = http_get_task(NULL);
 }
 
 void set_temp_room() {
+    // ESP_LOGI(TAG, "Temperature is %d \n", DHT11_read().temperature);
 
+    float temperature = TO_F((float)DHT11_read().temperature);
+    ESP_LOGI(TAG, "Temperature is %f \n", temperature);
+
+
+    char temp_arr[6];
+    int ret = snprintf(temp_arr, sizeof temp_arr, "%.2f", temperature);
+
+    int dot_idx = 0;
+    for(int i = 0; i < 6; i++) {
+        if(temp_arr[i] == '.')
+            dot_idx = i;
+
+        // TODO: do some shifting
+    }
+    
+
+    pthread_mutex_lock(&tube_vals_lock);
+    tube_vals[0] = 't';
+    tube_vals[1] = NULL;
+    tube_vals[2] = temp_arr[0];
+    tube_vals[3] = temp_arr[1];
+    tube_vals[4] = temp_arr[2];
+    tube_vals[5] = temp_arr[3];
+    tube_vals[6] = temp_arr[4];
+    tube_vals[7] = temp_arr[5];
+    pthread_mutex_unlock(&tube_vals_lock);
+    pthread_mutex_lock(&tube_dots_lock);
+    tube_dots[0] = 0;
+    tube_dots[1] = 0;
+    tube_dots[2] = 0;
+    tube_dots[3] = 0;
+    tube_dots[4] = 0;
+    tube_dots[5] = 0;
+    tube_dots[6] = 0;
+    tube_dots[7] = 0;
+    tube_dots[dot_idx] = 1;
+    pthread_mutex_unlock(&tube_dots_lock);
+}
+
+void set_humidity_room() {
+    ESP_LOGI(TAG, "Humidity is %d\n", DHT11_read().humidity);
 }
 
 void set_error() {
-
+    pthread_mutex_lock(&tube_vals_lock);
+    tube_vals[0] = NULL;
+    tube_vals[1] = NULL;
+    tube_vals[2] = NULL;
+    tube_vals[3] = 'E';
+    tube_vals[4] = 'r';
+    tube_vals[5] = 'r';
+    tube_vals[6] = 'o';
+    tube_vals[7] = 'r';
+    pthread_mutex_unlock(&tube_vals_lock);
+    pthread_mutex_lock(&tube_dots_lock);
+    tube_dots[0] = 0;
+    tube_dots[1] = 0;
+    tube_dots[2] = 0;
+    tube_dots[3] = 1;
+    tube_dots[4] = 0;
+    tube_dots[5] = 1;
+    tube_dots[6] = 0;
+    tube_dots[7] = 0;
+    pthread_mutex_unlock(&tube_dots_lock);
 }
 
 void check_button_input() {
@@ -474,7 +540,7 @@ void check_button_input() {
         if(gpio_get_level(PUSH_BUTTON_PIN) && !wasPressed) {
             wasPressed = true;
             curr_state++;
-            curr_state %= 4;
+            curr_state %= 5;
         } else if(!gpio_get_level(PUSH_BUTTON_PIN)) {
             wasPressed = false;
         }
@@ -498,6 +564,9 @@ void dispatcher() {
                 break;
             case temp_room:
                 set_temp_room();
+                break;
+            case humidity_room:
+                set_humidity_room();
                 break;
             case temp_loc:
                 set_temp_loc();
@@ -548,7 +617,7 @@ void app_main(void) {
     tube_init();
     xTaskCreate(dispatcher, "dispatcher", 8 * 1024,
                         NULL, 10, NULL);
-    xTaskCreate(check_button_input, "check_button_input", 4 * 1024,
+    xTaskCreate(check_button_input, "check_button_input", 2 * 1024,
                         NULL, 10, NULL);
     xTaskCreatePinnedToCore(set_tube, "set_tube", 2 * 1024,
                         NULL, 1, NULL, 1);

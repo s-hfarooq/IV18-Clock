@@ -41,3 +41,6 @@ MAX6921, ESP32, IV-18 tube
 | OUT19       | No connect    |
 | DOUT        | No connect    |
 | VBB         | 30v           |
+
+
+https://github.com/Anacron-mb/esp32-DHT11
