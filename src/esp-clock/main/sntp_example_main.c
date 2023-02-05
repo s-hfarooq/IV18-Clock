@@ -45,6 +45,8 @@ static const char *TAG = "ESP-CLOCK";
 #define LOAD 4
 #define CLK 2
 
+#define PUSH_BUTTON_PIN 23
+
 #ifndef INET6_ADDRSTRLEN
 #define INET6_ADDRSTRLEN 48
 #endif
@@ -222,6 +224,8 @@ void tube_init(void) {
     gpio_set_direction(LOAD, GPIO_MODE_OUTPUT);
     gpio_reset_pin(CLK);
     gpio_set_direction(CLK, GPIO_MODE_OUTPUT);
+
+    gpio_set_direction(PUSH_BUTTON_PIN, GPIO_MODE_INPUT);
 
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
@@ -463,6 +467,26 @@ void set_error() {
 
 }
 
+void check_button_input() {
+    bool wasPressed = false;
+
+    while(1) {
+        if(gpio_get_level(PUSH_BUTTON_PIN) && !wasPressed) {
+            wasPressed = true;
+            curr_state++;
+            curr_state %= 4;
+        } else if(!gpio_get_level(PUSH_BUTTON_PIN)) {
+            wasPressed = false;
+        }
+
+        // ESP_LOGI(TAG, "STATE IS %d", curr_state);
+
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+
+    vTaskDelete(NULL);
+}
+
 void dispatcher() {
     while(1) {
         switch(curr_state) {
@@ -484,7 +508,6 @@ void dispatcher() {
         }
 
         vTaskDelay(250 / portTICK_PERIOD_MS);
-        // TODO: check if button pressed - if it is then move to next state
     }
 
     vTaskDelete(NULL);
@@ -524,6 +547,8 @@ void app_main(void) {
 
     tube_init();
     xTaskCreate(dispatcher, "dispatcher", 8 * 1024,
+                        NULL, 10, NULL);
+    xTaskCreate(check_button_input, "check_button_input", 4 * 1024,
                         NULL, 10, NULL);
     xTaskCreatePinnedToCore(set_tube, "set_tube", 2 * 1024,
                         NULL, 1, NULL, 1);
