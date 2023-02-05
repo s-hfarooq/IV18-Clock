@@ -465,33 +465,62 @@ void set_temp_loc() {
 }
 
 void set_temp_room() {
-    // ESP_LOGI(TAG, "Temperature is %d \n", DHT11_read().temperature);
-
     float temperature = TO_F((float)DHT11_read().temperature);
-    ESP_LOGI(TAG, "Temperature is %f \n", temperature);
-
+    // ESP_LOGI(TAG, "Temperature is %f \n", temperature);
 
     char temp_arr[6];
     int ret = snprintf(temp_arr, sizeof temp_arr, "%.2f", temperature);
 
     int dot_idx = 0;
     for(int i = 0; i < 6; i++) {
-        if(temp_arr[i] == '.')
+        if(temp_arr[i] == '.') {
             dot_idx = i;
-
-        // TODO: do some shifting
+            break;
+        }
     }
-    
+
+    for(int i = dot_idx; i < 5; i++)
+        temp_arr[i] = temp_arr[i+1];
+    temp_arr[5] = NULL;
 
     pthread_mutex_lock(&tube_vals_lock);
     tube_vals[0] = 't';
     tube_vals[1] = NULL;
-    tube_vals[2] = temp_arr[0];
-    tube_vals[3] = temp_arr[1];
-    tube_vals[4] = temp_arr[2];
-    tube_vals[5] = temp_arr[3];
-    tube_vals[6] = temp_arr[4];
-    tube_vals[7] = temp_arr[5];
+    tube_vals[2] = NULL;
+    tube_vals[3] = temp_arr[0];
+    tube_vals[4] = temp_arr[1];
+    tube_vals[5] = temp_arr[2];
+    tube_vals[6] = temp_arr[3];
+    tube_vals[7] = temp_arr[4];
+    pthread_mutex_unlock(&tube_vals_lock);
+    pthread_mutex_lock(&tube_dots_lock);
+    tube_dots[0] = 0;
+    tube_dots[1] = 0;
+    tube_dots[2] = 0;
+    tube_dots[3] = 0;
+    tube_dots[4] = 1;
+    tube_dots[5] = 0;
+    tube_dots[6] = 0;
+    tube_dots[7] = 0;
+    pthread_mutex_unlock(&tube_dots_lock);
+}
+
+void set_humidity_room() {
+    int humidity = DHT11_read().humidity;
+    ESP_LOGI(TAG, "humidity is %d \n", humidity);
+
+    char temp_arr[3];
+    int ret = snprintf(temp_arr, sizeof temp_arr, "%d", humidity);
+
+    pthread_mutex_lock(&tube_vals_lock);
+    tube_vals[0] = 'h';
+    tube_vals[1] = NULL;
+    tube_vals[2] = NULL;
+    tube_vals[3] = NULL;
+    tube_vals[4] = NULL;
+    tube_vals[5] = temp_arr[0];
+    tube_vals[6] = temp_arr[1];
+    tube_vals[7] = temp_arr[2];
     pthread_mutex_unlock(&tube_vals_lock);
     pthread_mutex_lock(&tube_dots_lock);
     tube_dots[0] = 0;
@@ -502,12 +531,7 @@ void set_temp_room() {
     tube_dots[5] = 0;
     tube_dots[6] = 0;
     tube_dots[7] = 0;
-    tube_dots[dot_idx] = 1;
     pthread_mutex_unlock(&tube_dots_lock);
-}
-
-void set_humidity_room() {
-    ESP_LOGI(TAG, "Humidity is %d\n", DHT11_read().humidity);
 }
 
 void set_error() {
