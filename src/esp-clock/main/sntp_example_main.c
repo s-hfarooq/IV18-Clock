@@ -63,7 +63,7 @@ static const char *TAG = "ESP-CLOCK";
  */
 RTC_DATA_ATTR static int boot_count = 0;
 
-enum states {clock_24, clock_12, temp_room, humidity_room, temp_loc} curr_state = clock_12;
+enum states {clock_24, clock_12, temp_room, humidity_room, temp_loc} curr_state = clock_24;
 static volatile char tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static volatile bool tube_dots[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static pthread_mutex_t tube_vals_lock;
@@ -464,6 +464,7 @@ void set_temp_loc() {
     // float make_temp_api_request = http_get_task(NULL);
 }
 
+// TODO: show error instead of 30.2 (maybe save prev good value and dont show errors?)
 void set_temp_room() {
     float temperature = TO_F((float)DHT11_read().temperature);
     // ESP_LOGI(TAG, "Temperature is %f \n", temperature);
@@ -505,6 +506,7 @@ void set_temp_room() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// TODO - support negatives (happens during error) 
 void set_humidity_room() {
     int humidity = DHT11_read().humidity;
     ESP_LOGI(TAG, "humidity is %d \n", humidity);
@@ -549,9 +551,9 @@ void set_error() {
     tube_dots[0] = 0;
     tube_dots[1] = 0;
     tube_dots[2] = 0;
-    tube_dots[3] = 1;
+    tube_dots[3] = 0;
     tube_dots[4] = 0;
-    tube_dots[5] = 1;
+    tube_dots[5] = 0;
     tube_dots[6] = 0;
     tube_dots[7] = 0;
     pthread_mutex_unlock(&tube_dots_lock);
@@ -643,9 +645,10 @@ void app_main(void) {
                         NULL, 10, NULL);
     xTaskCreate(check_button_input, "check_button_input", 2 * 1024,
                         NULL, 10, NULL);
-    xTaskCreatePinnedToCore(set_tube, "set_tube", 2 * 1024,
+    xTaskCreatePinnedToCore(dht11_preform_read, "dht11_preform_read", 2 * 1024,
+                        NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(set_tube, "set_tube", 4 * 1024,
                         NULL, 1, NULL, 1);
-
 
 
     // http_get_task(NULL);

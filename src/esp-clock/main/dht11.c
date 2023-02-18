@@ -34,6 +34,8 @@ static gpio_num_t dht_gpio;
 static int64_t last_read_time = -2000000;
 static struct dht11_reading last_read;
 
+static unsigned int dht11_should_read;
+
 static int _waitOrTimeout(uint16_t microSeconds, int level) {
     int micros_ticks = 0;
     while(gpio_get_level(dht_gpio) == level) { 
@@ -82,45 +84,66 @@ static struct dht11_reading _crcError() {
     return crcError;
 }
 
+void dht11_preform_read() {
+    while(1) {
+        if(dht11_should_read) {
+            last_read_time = esp_timer_get_time();
+
+            uint8_t data[5] = {0,0,0,0,0};
+
+            _sendStartSignal();
+
+            if(_checkResponse() == DHT11_TIMEOUT_ERROR) {
+                last_read = _timeoutError();
+                goto endOfLoop;
+            }
+            
+            /* Read response */
+            for(int i = 0; i < 40; i++) {
+                /* Initial data */
+                if(_waitOrTimeout(50, 0) == DHT11_TIMEOUT_ERROR) {
+                    last_read = _timeoutError();
+                    goto endOfLoop;
+                }
+                        
+                if(_waitOrTimeout(70, 1) > 28) {
+                    /* Bit received was a 1 */
+                    data[i/8] |= (1 << (7-(i%8)));
+                }
+            }
+
+            if(_checkCRC(data) != DHT11_CRC_ERROR) {
+                last_read.status = DHT11_OK;
+                last_read.temperature = data[2];
+                last_read.humidity = data[0];
+                // return last_read;
+                goto endOfLoop;
+            } else {
+                last_read = _crcError();
+                goto endOfLoop;
+            }
+        }
+
+        endOfLoop:
+        dht11_should_read = 0;
+
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+
+    vTaskDelete(NULL);
+}
+
 void DHT11_init(gpio_num_t gpio_num) {
     /* Wait 1 seconds to make the device pass its initial unstable status */
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     dht_gpio = gpio_num;
+    dht11_should_read = 1;
 }
 
 struct dht11_reading DHT11_read() {
     /* Tried to sense too son since last read (dht11 needs ~2 seconds to make a new read) */
-    if(esp_timer_get_time() - 2000000 < last_read_time) {
-        return last_read;
-    }
+    if(esp_timer_get_time() - 2000000 >= last_read_time)
+        dht11_should_read = 1;
 
-    last_read_time = esp_timer_get_time();
-
-    uint8_t data[5] = {0,0,0,0,0};
-
-    _sendStartSignal();
-
-    if(_checkResponse() == DHT11_TIMEOUT_ERROR)
-        return last_read = _timeoutError();
-    
-    /* Read response */
-    for(int i = 0; i < 40; i++) {
-        /* Initial data */
-        if(_waitOrTimeout(50, 0) == DHT11_TIMEOUT_ERROR)
-            return last_read = _timeoutError();
-                
-        if(_waitOrTimeout(70, 1) > 28) {
-            /* Bit received was a 1 */
-            data[i/8] |= (1 << (7-(i%8)));
-        }
-    }
-
-    if(_checkCRC(data) != DHT11_CRC_ERROR) {
-        last_read.status = DHT11_OK;
-        last_read.temperature = data[2];
-        last_read.humidity = data[0];
-        return last_read;
-    } else {
-        return last_read = _crcError();
-    }
+    return last_read;
 }
