@@ -119,7 +119,6 @@ void dht11_preform_read() {
                 last_read.status = DHT11_OK;
                 last_read.temperature = data[2];
                 last_read.humidity = data[0];
-                // return last_read;
                 goto endOfLoop;
             } else {
                 if(should_produce_error)
@@ -131,7 +130,7 @@ void dht11_preform_read() {
         endOfLoop:
         dht11_should_read = 0;
 
-        vTaskDelay(50 / portTICK_PERIOD_MS);
+        vTaskDelay(1000000 / portTICK_PERIOD_MS);
     }
 
     vTaskDelete(NULL);
