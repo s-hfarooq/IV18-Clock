@@ -35,6 +35,7 @@ static int64_t last_read_time = -2000000;
 static struct dht11_reading last_read;
 
 static unsigned int dht11_should_read;
+static unsigned int should_produce_error;
 
 static int _waitOrTimeout(uint16_t microSeconds, int level) {
     int micros_ticks = 0;
@@ -94,7 +95,8 @@ void dht11_preform_read() {
             _sendStartSignal();
 
             if(_checkResponse() == DHT11_TIMEOUT_ERROR) {
-                last_read = _timeoutError();
+                if(should_produce_error)
+                    last_read = _timeoutError();
                 goto endOfLoop;
             }
             
@@ -102,7 +104,8 @@ void dht11_preform_read() {
             for(int i = 0; i < 40; i++) {
                 /* Initial data */
                 if(_waitOrTimeout(50, 0) == DHT11_TIMEOUT_ERROR) {
-                    last_read = _timeoutError();
+                    if(should_produce_error)
+                        last_read = _timeoutError();
                     goto endOfLoop;
                 }
                         
@@ -119,7 +122,8 @@ void dht11_preform_read() {
                 // return last_read;
                 goto endOfLoop;
             } else {
-                last_read = _crcError();
+                if(should_produce_error)
+                    last_read = _crcError();
                 goto endOfLoop;
             }
         }
@@ -138,6 +142,11 @@ void DHT11_init(gpio_num_t gpio_num) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     dht_gpio = gpio_num;
     dht11_should_read = 1;
+    should_produce_error = 0;
+
+    last_read.status = DHT11_TIMEOUT_ERROR;
+    last_read.temperature = 0;
+    last_read.humidity = 0;
 }
 
 struct dht11_reading DHT11_read() {

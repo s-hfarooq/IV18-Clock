@@ -57,17 +57,13 @@ static const char *TAG = "ESP-CLOCK";
 
 #define TO_F(c) ((c * 9 / 5) + 32)
 
-/* Variable holding number of times ESP32 restarted since first boot.
- * It is placed into RTC memory using RTC_DATA_ATTR and
- * maintains its value when ESP32 wakes from deep sleep.
- */
-RTC_DATA_ATTR static int boot_count = 0;
-
 enum states {clock_24, clock_12, temp_room, humidity_room, temp_loc} curr_state = clock_24;
 static volatile char tube_vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static volatile bool tube_dots[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static pthread_mutex_t tube_vals_lock;
 static pthread_mutex_t tube_dots_lock;
+static pthread_mutex_t fetched_temp_lock;
+static float curr_fetched_out_temp;
 
 static void obtain_time(void);
 
@@ -251,7 +247,7 @@ static const char *REQUEST = "GET " WEB_PATH " HTTP/1.0\r\n"
     "User-Agent: esp-idf/1.0 esp32\r\n"
     "\r\n";
 
-static void http_get_task(void *pvParameters) {
+static void get_outside_temp(void *pvParameters) {
     const struct addrinfo hints = {
         .ai_family = AF_INET,
         .ai_socktype = SOCK_STREAM,
@@ -353,14 +349,18 @@ static void http_get_task(void *pvParameters) {
         ESP_LOGI(TAG, "TEMP IS: %s", tmp_str);
         ESP_LOGI(TAG, "TEMP IS: %f (%f)", temp_c, temp_f);
 
+        pthread_mutex_lock(&fetched_temp_lock);
+        curr_fetched_out_temp = temp_f;
+        pthread_mutex_unlock(&fetched_temp_lock);
+
         ESP_LOGI(TAG, "... done reading from socket. Last read return=%d errno=%d.", r, errno);
         close(s);
-        for(int countdown = 10; countdown >= 0; countdown--) {
-            ESP_LOGI(TAG, "%d... ", countdown);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
+        
+        vTaskDelay(1000 * 60 / portTICK_PERIOD_MS);
         ESP_LOGI(TAG, "Starting again!");
     }
+
+    vTaskDelete(NULL);
 }
 
 void set_tube() {
@@ -461,13 +461,47 @@ void set_time(bool is_24) {
 }
 
 void set_temp_loc() {
-    // float make_temp_api_request = http_get_task(NULL);
+    char temp_arr[6];
+    pthread_mutex_lock(&fetched_temp_lock);
+    int ret = snprintf(temp_arr, sizeof temp_arr, "%.2f", curr_fetched_out_temp);
+    pthread_mutex_unlock(&fetched_temp_lock);
+
+    int dot_idx = 0;
+    for(int i = 0; i < 6; i++) {
+        if(temp_arr[i] == '.') {
+            dot_idx = i;
+            break;
+        }
+    }
+
+    for(int i = dot_idx; i < 5; i++)
+        temp_arr[i] = temp_arr[i+1];
+    temp_arr[5] = NULL;
+
+    pthread_mutex_lock(&tube_vals_lock);
+    tube_vals[0] = 'o';
+    tube_vals[1] = 'u';
+    tube_vals[2] = 't';
+    tube_vals[3] = NULL;
+    tube_vals[4] = temp_arr[0];
+    tube_vals[5] = temp_arr[1];
+    tube_vals[6] = temp_arr[2];
+    tube_vals[7] = temp_arr[3];
+    pthread_mutex_unlock(&tube_vals_lock);
+    pthread_mutex_lock(&tube_dots_lock);
+    tube_dots[0] = 0;
+    tube_dots[1] = 0;
+    tube_dots[2] = 0;
+    tube_dots[3] = 0;
+    tube_dots[4] = 0;
+    tube_dots[5] = 1;
+    tube_dots[6] = 0;
+    tube_dots[7] = 0;
+    pthread_mutex_unlock(&tube_dots_lock);
 }
 
-// TODO: show error instead of 30.2 (maybe save prev good value and dont show errors?)
 void set_temp_room() {
     float temperature = TO_F((float)DHT11_read().temperature);
-    // ESP_LOGI(TAG, "Temperature is %f \n", temperature);
 
     char temp_arr[6];
     int ret = snprintf(temp_arr, sizeof temp_arr, "%.2f", temperature);
@@ -506,10 +540,8 @@ void set_temp_room() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
-// TODO - support negatives (happens during error) 
 void set_humidity_room() {
     int humidity = DHT11_read().humidity;
-    ESP_LOGI(TAG, "humidity is %d \n", humidity);
 
     char temp_arr[3];
     int ret = snprintf(temp_arr, sizeof temp_arr, "%d", humidity);
@@ -571,8 +603,6 @@ void check_button_input() {
             wasPressed = false;
         }
 
-        // ESP_LOGI(TAG, "STATE IS %d", curr_state);
-
         vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 
@@ -609,9 +639,6 @@ void dispatcher() {
 }
 
 void app_main(void) {
-    ++boot_count;
-    ESP_LOGI(TAG, "Boot count: %d", boot_count);
-
     time_t now;
     struct tm timeinfo;
     time(&now);
@@ -626,14 +653,7 @@ void app_main(void) {
 
     char strftime_buf[64];
 
-    // Set timezone to Eastern Standard Time and print local time
-    setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0", 1);
-    tzset();
-    localtime_r(&now, &timeinfo);
-    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "The current date/time in New York is: %s", strftime_buf);
-
-    // Set timezone to China Standard Time
+    // Set timezone to Seattle
     setenv("TZ", "PST+8", 1);
     tzset();
     localtime_r(&now, &timeinfo);
@@ -647,11 +667,10 @@ void app_main(void) {
                         NULL, 10, NULL);
     xTaskCreatePinnedToCore(dht11_preform_read, "dht11_preform_read", 2 * 1024,
                         NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(get_outside_temp, "get_outside_temp", 4 * 1024,
+                        NULL, 2, NULL, 0);
     xTaskCreatePinnedToCore(set_tube, "set_tube", 4 * 1024,
                         NULL, 1, NULL, 1);
-
-
-    // http_get_task(NULL);
 
     if (sntp_get_sync_mode() == SNTP_SYNC_MODE_SMOOTH) {
         struct timeval outdelta;
