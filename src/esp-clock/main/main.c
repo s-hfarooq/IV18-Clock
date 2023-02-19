@@ -67,14 +67,6 @@ static float curr_fetched_out_temp;
 
 static void obtain_time(void);
 
-#ifdef CONFIG_SNTP_TIME_SYNC_METHOD_CUSTOM
-void sntp_sync_time(struct timeval *tv) {
-   settimeofday(tv, NULL);
-   ESP_LOGI(TAG, "Time is synchronized from custom code");
-   sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
-}
-#endif
-
 void time_sync_notification_cb(struct timeval *tv) {
     ESP_LOGI(TAG, "Notification of a time synchronization event");
 }
@@ -217,6 +209,7 @@ void segment_value_conversion(char val, unsigned char* ret) {
   }
 }
 
+// Initialize pin directions, DHT11 sensor, and networking
 void tube_init(void) {
     gpio_reset_pin(DOUT);
     gpio_set_direction(DOUT, GPIO_MODE_OUTPUT);
@@ -235,6 +228,7 @@ void tube_init(void) {
     ESP_ERROR_CHECK(example_connect());
 }
 
+// Helper function to read idx bit of val (same as bitRead function for arduino)
 bool bitRead(unsigned char val, int idx) {
     val >>= idx;
     val &= 0x1;
@@ -247,6 +241,7 @@ static const char *REQUEST = "GET " WEB_PATH " HTTP/1.0\r\n"
     "User-Agent: esp-idf/1.0 esp32\r\n"
     "\r\n";
 
+// API fetch for outside temperature
 static void get_outside_temp(void *pvParameters) {
     const struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -357,12 +352,12 @@ static void get_outside_temp(void *pvParameters) {
         close(s);
         
         vTaskDelay(1000 * 60 / portTICK_PERIOD_MS);
-        ESP_LOGI(TAG, "Starting again!");
     }
 
     vTaskDelete(NULL);
 }
 
+// Function to set value on tube - runs on separate core to avoid flashing issue. Sets values from tube_vals/tube_dots arrays
 void set_tube() {
     while(1) {
         int del = 1;
@@ -415,6 +410,7 @@ void set_tube() {
     vTaskDelete(NULL);
 }
 
+// Sets current time in tube_vals/tube_dots arrays
 void set_time(bool is_24) {
     time_t now;
     struct tm timeinfo;
@@ -460,6 +456,7 @@ void set_time(bool is_24) {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// Sets current fetched temp in tube_vals/tube_dots arrays
 void set_temp_loc() {
     char temp_arr[6];
     pthread_mutex_lock(&fetched_temp_lock);
@@ -500,6 +497,7 @@ void set_temp_loc() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// Sets current indoor temp in tube_vals/tube_dots arrays
 void set_temp_room() {
     float temperature = TO_F((float)DHT11_read().temperature);
 
@@ -540,6 +538,7 @@ void set_temp_room() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// Sets current indoor humidity in tube_vals/tube_dots arrays
 void set_humidity_room() {
     int humidity = DHT11_read().humidity;
 
@@ -568,6 +567,7 @@ void set_humidity_room() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// Sets tube_vals/tube_dots arrays to an error value
 void set_error() {
     pthread_mutex_lock(&tube_vals_lock);
     tube_vals[0] = NULL;
@@ -591,6 +591,7 @@ void set_error() {
     pthread_mutex_unlock(&tube_dots_lock);
 }
 
+// Checks to see if button was pressed - iterate state if it was
 void check_button_input() {
     bool wasPressed = false;
 
@@ -609,6 +610,7 @@ void check_button_input() {
     vTaskDelete(NULL);
 }
 
+// Runs function based on current state every ~250ms
 void dispatcher() {
     while(1) {
         switch(curr_state) {
@@ -701,6 +703,7 @@ static void print_servers(void) {
     }
 }
 
+// Gets time from SNTP
 static void obtain_time(void) {
     ESP_ERROR_CHECK( nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());

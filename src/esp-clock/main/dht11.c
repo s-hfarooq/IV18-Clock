@@ -130,7 +130,7 @@ void dht11_preform_read() {
         endOfLoop:
         dht11_should_read = 0;
 
-        vTaskDelay(1000000 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 
     vTaskDelete(NULL);
